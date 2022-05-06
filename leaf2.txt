@@ -1,0 +1,144 @@
+---vPC keep alive---
+
+feature vpc
+feature lacp
+
+vlan 100
+
+vpc domain 1
+  peer-keepalive destination 10.70.66.187 source 10.70.66.186 
+  peer-switch
+  peer-gateway
+  auto-recovery
+  ipv6 nd synchronize
+  ip arp synchronize
+
+  #Priority入れるとpeer-linkが上がらなかったので注意
+  role priority 8192
+  system-priority 8192
+
+---vPC Peer Link---
+
+
+interface Ethernet1/21-22
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 100
+  channel-group 10 mode active
+  no shutdown
+
+
+interface port-channel10
+  vpc peer-link
+
+
+---vPC Down Link---
+
+interface Ethernet1/23
+  switchport
+  switchport mode trunk
+  switchport trunk allowed vlan 100
+  channel-group 1 mode active
+  no shutdown
+
+interface port-channel1
+  vpc 1
+
+
+---vPC delay restore---
+vpc domain 1
+  delay restore 150
+  
+
+---UNDERLAY OSPF ---
+feature ospf
+
+router ospf UNDERLAY
+  router-id 2.2.2.2
+
+
+interface Ethernet1/27
+  ip address 192.168.1.1/30
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+  mtu 9216
+  no shutdown
+
+interface loopback0
+  description underlay OSPF
+  ip address 2.2.2.2/32
+  ip router ospf UNDERLAY area 0.0.0.0
+
+
+---OVERLAY MP-BGP---
+feature bgp
+nv overlay evpn
+
+#loopback0(underlay OSPF)をMP-BGPでも使う場合
+router bgp 65001
+  neighbor 1.1.1.1
+    remote-as 65001
+    update-source loopback0
+    address-family l2vpn evpn
+      send-community
+      send-community extended
+
+
+---VXLAN---
+feature vn-segment-vlan-based
+
+vlan 100
+  vn-segment 10100
+
+evpn
+  vni 10100 l2
+    rd auto
+    route-target import auto
+    route-target export auto
+
+#NVE Loopback Interface(VXLAN Encap)
+#vPCの場合、Anycast VTEPが使える。vPCなしでsecondaryいれたらnve peerが張れなかった
+
+interface loopback1
+  description Anycast VTEP
+  ip address 22.22.22.22/32
+  ip address 100.100.100.100/32 secondary
+  ip router ospf UNDERLAY area 0.0.0.0
+
+
+#VTEPの設定
+feature nv overlay
+
+interface nve 1
+  no shutdown
+  source-interface loopback1
+  host-reachability protocol bgp
+  member vni 10100
+    ingress-replication protocol bgp
+
+---Anycast Gateway---
+
+#vPCの場合、anycast-gateway-macは不要な気がする
+#つけといても良い。むしろつけるべきby大西さん
+
+feature interface-vlan
+fabric forwarding anycast-gateway-mac 2020.0000.00aa
+
+interface Ethernet1/3
+  switchport
+  switchport access vlan 100
+  no shutdown
+
+interface vlan 100
+  ip address 172.20.255.254/16
+  fabric forwarding mode anycast-gateway
+  no shutdown
+
+---NVE hold down timer---
+interface nve 1
+  source-interface hold-down-time 180
+
+---vPC Infrastructure VLANS---
+system nve infra-vlans 100
+
+

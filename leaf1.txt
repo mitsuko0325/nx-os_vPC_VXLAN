@@ -1,0 +1,101 @@
+---UNDERLAY OSPF ---
+
+feature ospf
+
+router ospf UNDERLAY
+  router-id 1.1.1.1
+
+interface Ethernet1/27
+  ip address 192.168.1.2/30
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+  mtu 9216
+  no shutdown
+
+interface Ethernet1/28
+  ip address 192.168.2.2/30
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+  mtu 9216
+  no shutdown 
+
+interface loopback0
+  ip address 1.1.1.1/32
+  ip ospf network point-to-point
+  ip router ospf UNDERLAY area 0.0.0.0
+
+
+---OVERLAY MP-BGP---
+
+feature bgp
+nv overlay evpn
+
+#leafがMP-BGPでloopback0を使う(Encap Loopbackを個別で使う)場合
+
+router bgp 65001
+  neighbor 2.2.2.2
+    remote-as 65001
+    update-source loopback0
+    address-family l2vpn evpn
+      send-community
+      send-community extended
+      route-reflector-client
+  neighbor 3.3.3.3
+    remote-as 65001
+    update-source loopback0
+    address-family l2vpn evpn
+      send-community
+      send-community extended
+      route-reflector-client
+      
+---VXLAN---
+feature vn-segment-vlan-based
+
+vlan 100
+  vn-segment 10100
+
+evpn
+  vni 10100 l2
+    rd auto
+    route-target import auto
+    route-target export auto
+
+#NVE Loopback Interface(VXLAN Encap)
+#vPCの場合、Anycast VTEPが使える。vPCなしでsecondaryいれたらnve peerが張れなかった
+
+interface loopback1
+  description VTEP
+  ip address 11.11.11.11/32
+  ip router ospf UNDERLAY area 0.0.0.0
+
+
+#VTEPの設定
+feature nv overlay
+
+interface nve 1
+  no shutdown
+  source-interface loopback1
+  host-reachability protocol bgp
+  member vni 10100
+    ingress-replication protocol bgp
+
+---Anycast Gateway---
+
+feature interface-vlan
+fabric forwarding anycast-gateway-mac 2020.0000.00aa
+
+interface Ethernet1/3
+  switchport
+  switchport mode trunk 
+  switchport trunk allowed vlan 10
+  no shutdown
+
+interface vlan 100
+  ip address 172.20.255.254/16
+  fabric forwarding mode anycast-gateway
+  no shutdown
+
+
+
+
+
